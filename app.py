@@ -56,7 +56,7 @@ def calculate_detailed_net(profit, months_count=1):
 
 try:
     conn = psycopg2.connect(DB_URI)
-    income_df = pd.read_sql("SELECT *, split_part(project_description, ' - ', 1) as clean_client FROM income WHERE payment_status = 'paid'", conn)
+    income_df = pd.read_sql("SELECT *, split_part(project_description, ' - ', 1) as clean_client FROM income WHERE payment_status IN ('paid', 'pending')", conn)
     expenses_df = pd.read_sql("SELECT * FROM expenses", conn)
     conn.close()
 
@@ -112,4 +112,5 @@ try:
     st.markdown("</div>", unsafe_allow_html=True)
 
 except Exception as e:
+
     st.error(f"Error: {e}")
