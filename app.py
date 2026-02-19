@@ -15,7 +15,7 @@ st.markdown("""
         background-size: cover; background-attachment: fixed; direction: rtl;
     }
     .glass-box {
-        background: rgba(255, 255, 255, 0.94); /* אטימות גבוהה לקריאות מושלמת */
+        background: rgba(255, 255, 255, 0.94);
         backdrop-filter: blur(10px);
         border-radius: 30px;
         box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
@@ -28,7 +28,6 @@ st.markdown("""
     .detail-text { font-size: 1.1rem; font-weight: 600; opacity: 0.9; text-align: right; color: #444; }
     h3 { font-family: 'Assistant', sans-serif; font-weight: 800; color: #1d1d1f; }
     
-    /* עיצוב סיידבר לילי */
     [data-testid="stSidebar"] {
         background-color: rgba(0, 5, 15, 0.9);
         color: white;
@@ -36,21 +35,41 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 3. מנוע חישוב חכם (פריסת חודשים) - משיכה מה-Secrets לאבטחה
-# השורה הזו שונתה כדי שלא יראו את הסיסמה שלך ב-GitHub
+# 3. מנוע חישוב עם תקרות חכמות (לפי תקרות עצמאים 2025/26)
 DB_URI = st.secrets["DB_URI"]
 
 def calculate_detailed_net(profit, months_count=1):
     if profit <= 0: return {k: 0 for k in ['net', 'tax', 'bl', 'pension', 'training', 'total_social']}
-    pension = profit * 0.165 
-    training = min(profit * 0.045, 1100 * months_count)
+    
+    # תקרות מותאמות לכמות החודשים שנבחרה
+    training_cap = 1100 * months_count # תקרת הפקדה מוכרת לקרן השתלמות
+    pension_cap = 3000 * months_count  # תקרת הפקדה אופטימלית להטבת מס (משוער)
+    
+    # חישוב הפרשות (מוגבל בתקרה שנתית יחסית)
+    training = min(profit * 0.045, training_cap)
+    pension = min(profit * 0.165, pension_cap)
+    
+    # ביטוח לאומי (מדרגות)
     bl_low_bracket = 7522 * months_count
-    bl = (bl_low_bracket * 0.0597) + (max(0, profit - bl_low_bracket) * 0.1783) if profit > bl_low_bracket else profit * 0.0597
-    taxable = profit - pension - training - (bl * 0.52)
+    if profit > bl_low_bracket:
+        bl = (bl_low_bracket * 0.0597) + ((profit - bl_low_bracket) * 0.1783)
+    else:
+        bl = profit * 0.0597
+    
+    # חישוב מס הכנסה (אחרי ניכויים מוכרים)
+    # ניכוי 52% מהביטוח הלאומי וניכויים סוציאליים
+    taxable = profit - (bl * 0.52) - training - (pension * 0.35) 
+    
     tax_bracket_1 = 7000 * months_count
-    raw_tax = (tax_bracket_1 * 0.10) + ((taxable - tax_bracket_1) * 0.14) if taxable > tax_bracket_1 else taxable * 0.10
+    if taxable > tax_bracket_1:
+        raw_tax = (tax_bracket_1 * 0.10) + ((taxable - tax_bracket_1) * 0.14)
+    else:
+        raw_tax = taxable * 0.10
+        
     credit_points_total = (4.25 * 245) * months_count
     income_tax = max(0, raw_tax - credit_points_total) 
+    
+    # נטו סופי בכיס
     net = profit - bl - income_tax - pension - training
     return {'net': net, 'tax': income_tax, 'bl': bl, 'pension': pension, 'training': training, 'total_social': pension + training}
 
@@ -62,19 +81,18 @@ try:
 
     income_df['date'] = pd.to_datetime(income_df['date'])
     income_df['month_year'] = income_df['date'].dt.strftime('%m/%Y')
-    all_months = income_df['month_year'].unique().tolist()
-    total_months_in_data = len(all_months)
+    all_months = sorted(income_df['month_year'].unique().tolist(), reverse=True)
+    total_months_count = len(all_months)
 
     # --- Sidebar ---
     st.sidebar.title("🛠️ הגדרות Vision")
     target_net = st.sidebar.number_input("יעד נטו חודשי (₪):", value=20000, step=1000)
-    months_list = ["הכל (שנתי)"] + sorted(all_months, reverse=True)
-    selected_vision = st.sidebar.selectbox("בחר תקופה:", months_list)
+    selected_vision = st.sidebar.selectbox("בחר תקופה:", ["הכל (שנתי)"] + all_months)
 
     if selected_vision == "הכל (שנתי)":
         display_inc = income_df
         display_exp = expenses_df
-        m_count = total_months_in_data
+        m_count = total_months_count if total_months_count > 0 else 1
     else:
         display_inc = income_df[income_df['month_year'] == selected_vision]
         expenses_df['date'] = pd.to_datetime(expenses_df['date'])
@@ -87,7 +105,7 @@ try:
 
     # --- תצוגה ראשית ---
     st.markdown(f"""<div class="glass-box">
-        <div class="small-label" style="font-size:1.4rem;">🏠 נטו סופי לבית - {selected_vision}</div>
+        <div class="small-label" style="font-size:1.4rem;">🏠 נטו סופי לבית (אחרי חסכונות) - {selected_vision}</div>
         <div class="hero-value">₪{int(round(res['net'])):,}</div>
         <div style="margin-top:15px;"><p style="font-weight:700;">התקדמות ליעד: {min(100, int(res['net']/(target_net * m_count)*100))}%</p></div>
     </div>""", unsafe_allow_html=True)
@@ -99,7 +117,7 @@ try:
     with c2:
         st.markdown(f"""<div class="glass-box"><div class="small-label">🏛️ מיסים</div><div class="small-value">₪{int(res['tax']+res['bl']):,}</div><p class="detail-text">מס הכנסה: ₪{int(res['tax']):,}</p><p class="detail-text">ביטוח לאומי: ₪{int(res['bl']):,}</p></div>""", unsafe_allow_html=True)
     with c3:
-        st.markdown(f"""<div class="glass-box"><div class="small-label">💰 חיסכון</div><div class="small-value">₪{int(res['total_social']):,}</div><p class="detail-text">פנסיה: ₪{int(res['pension']):,}</p><p class="detail-text">השתלמות: ₪{int(res['training']):,}</p></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="glass-box"><div class="small-label">💰 חסכון מקסימלי</div><div class="small-value">₪{int(res['total_social']):,}</div><p class="detail-text">פנסיה: ₪{int(res['pension']):,}</p><p class="detail-text">השתלמות: ₪{int(res['training']):,}</p></div>""", unsafe_allow_html=True)
 
     # פילוח לקוחות
     st.markdown("<div class='glass-box'><h3>👥 הכנסה לפי לקוח</h3>", unsafe_allow_html=True)
@@ -112,5 +130,4 @@ try:
     st.markdown("</div>", unsafe_allow_html=True)
 
 except Exception as e:
-
     st.error(f"Error: {e}")
